@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>snag</title>
+<meta name="description" content="Download video and audio from YouTube, TikTok, Instagram, X, Reddit and a thousand other sites. Small CLI, no watermarks.">
+<style>
+  :root { --bg:#fafaf8; --fg:#1a1a18; --mute:#6b6b66; --line:#e3e3de; --code:#f0f0ec; --accent:#1a1a18; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141413; --fg:#ecece8; --mute:#8d8d86; --line:#2a2a27; --code:#1e1e1c; --accent:#ecece8; }
+  }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:64px 20px 96px; }
+  h1 { font-size:28px; margin:0 0 4px; letter-spacing:-.02em; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--mute);
+    margin:48px 0 12px; font-weight:600; }
+  p { margin:0 0 12px; }
+  .sub { color:var(--mute); margin-bottom:32px; }
+  a { color:var(--fg); }
+  code, pre { font:13.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:6px;
+    padding:12px 14px; margin:0 0 12px; overflow-x:auto; position:relative; }
+  :not(pre) > code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  input[type=text] { flex:1 1 280px; padding:9px 11px; border:1px solid var(--line);
+    background:var(--bg); color:var(--fg); border-radius:6px; font:inherit; }
+  select { padding:9px 8px; border:1px solid var(--line); background:var(--bg);
+    color:var(--fg); border-radius:6px; font:inherit; }
+  label.chk { display:flex; align-items:center; gap:6px; color:var(--mute); font-size:14px; }
+  button { padding:7px 12px; border:1px solid var(--line); background:var(--bg); color:var(--fg);
+    border-radius:6px; font:inherit; font-size:14px; cursor:pointer; }
+  button:hover { border-color:var(--mute); }
+  input:focus, select:focus, button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td { padding:6px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  td:first-child { width:90px; }
+  .out { display:flex; gap:8px; align-items:flex-start; }
+  .out pre { flex:1; margin:0; white-space:pre-wrap; word-break:break-all; }
+  .tabs { display:flex; gap:4px; margin-bottom:8px; }
+  .tabs button[aria-selected=true] { background:var(--code); }
+  footer { margin-top:64px; color:var(--mute); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>snag</h1>
+  <p class="sub">Download video and audio from YouTube, TikTok, Instagram, X, Reddit and about a thousand other sites. One small binary, clean files, no watermarks.</p>
+
+  <h2>Command builder</h2>
+  <p>Browsers can't fetch from these sites directly, so downloading happens locally with the CLI below. Paste a link to get the command.</p>
+  <div class="row">
+    <input type="text" id="url" placeholder="https://..." autocomplete="off" spellcheck="false" aria-label="Link">
+  </div>
+  <div class="row">
+    <select id="mode" aria-label="Type">
+      <option value="v">Video (mp4)</option>
+      <option value="a">Audio (mp3)</option>
+    </select>
+    <select id="q" aria-label="Max quality">
+      <option value="">Best quality</option>
+      <option value="2160">2160p</option>
+      <option value="1440">1440p</option>
+      <option value="1080">1080p</option>
+      <option value="720">720p</option>
+      <option value="480">480p</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="pl"> playlist / profile</label>
+    <label class="chk"><input type="checkbox" id="ck"> private / age-gated</label>
+  </div>
+  <div class="out">
+    <pre id="cmd">snag &lt;url&gt;</pre>
+    <button id="copy" type="button">Copy</button>
+  </div>
+
+  <h2>Supported</h2>
+  <table>
+    <tr><td>Video</td><td>YouTube, TikTok, Instagram (posts, reels, stories, highlights), X, Reddit, Facebook, Twitch, Vimeo, Dailymotion, Bilibili</td></tr>
+    <tr><td>Audio</td><td>SoundCloud, Bandcamp, Mixcloud, or any video with <code>-a</code></td></tr>
+    <tr><td>More</td><td>Anything <a href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md">yt-dlp supports</a></td></tr>
+  </table>
+
+  <h2>Install</h2>
+  <p>You need <a href="https://go.dev/dl/">Go 1.21+</a>, <a href="https://github.com/yt-dlp/yt-dlp#installation">yt-dlp</a> and <a href="https://ffmpeg.org/download.html">ffmpeg</a>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-os="linux">Linux</button>
+    <button role="tab" aria-selected="false" data-os="mac">macOS</button>
+    <button role="tab" aria-selected="false" data-os="win">Windows</button>
+  </div>
+
+  <div data-pane="linux">
+<pre># dependencies (Debian/Ubuntu; Arch: pacman -S go yt-dlp ffmpeg)
+sudo apt install golang ffmpeg pipx && pipx install yt-dlp
+
+# build
+git clone https://github.com/fordpepper/snag
+cd snag
+make
+sudo make install   # optional, installs to /usr/local/bin</pre>
+  </div>
+  <div data-pane="mac" hidden>
+<pre>brew install go yt-dlp ffmpeg
+
+git clone https://github.com/fordpepper/snag
+cd snag
+make
+sudo make install   # optional</pre>
+  </div>
+  <div data-pane="win" hidden>
+<pre>winget install GoLang.Go yt-dlp.yt-dlp Gyan.FFmpeg
+
+git clone https://github.com/fordpepper/snag
+cd snag
+go build -o snag.exe .</pre>
+  </div>
+
+  <h2>Usage</h2>
+<pre>snag https://youtu.be/dQw4w9WgXcQ
+snag -a https://soundcloud.com/artist/track
+snag -q 720 -o ~/Videos https://x.com/user/status/123
+snag -p https://www.tiktok.com/@user
+snag -b firefox https://www.instagram.com/stories/user/</pre>
+  <table>
+    <tr><td><code>-a</code></td><td>audio only, mp3</td></tr>
+    <tr><td><code>-q N</code></td><td>max height in pixels</td></tr>
+    <tr><td><code>-o DIR</code></td><td>output directory</td></tr>
+    <tr><td><code>-b NAME</code></td><td>read cookies from a browser, for private or age-gated posts</td></tr>
+    <tr><td><code>-p</code></td><td>whole playlist or profile</td></tr>
+    <tr><td><code>-v</code></td><td>verbose output</td></tr>
+  </table>
+
+  <h2>Notes</h2>
+  <p>Watermarks are avoided by fetching the original stream the site serves, not by editing video. Sites change often; if something breaks, update yt-dlp first (<code>yt-dlp -U</code> or <code>pipx upgrade yt-dlp</code>).</p>
+  <p>Only download what you have the right to. Respect creators and each site's terms.</p>
+
+  <footer><a href="https://github.com/fordpepper/snag">Source on GitHub</a> · MIT</footer>
+</main>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function build() {
+    var parts = ["snag"];
+    if ($("mode").value === "a") parts.push("-a");
+    else if ($("q").value) parts.push("-q " + $("q").value);
+    if ($("pl").checked) parts.push("-p");
+    if ($("ck").checked) parts.push("-b firefox");
+    var u = $("url").value.trim();
+    parts.push(u ? "'" + u.replace(/'/g, "'\\''") + "'" : "<url>");
+    $("cmd").textContent = parts.join(" ");
+  }
+  ["url", "mode", "q", "pl", "ck"].forEach(function (id) {
+    $(id).addEventListener("input", build);
+    $(id).addEventListener("change", build);
+  });
+  $("mode").addEventListener("change", function () { $("q").disabled = this.value === "a"; });
+  $("copy").addEventListener("click", function () {
+    var b = this, t = $("cmd").textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () {
+      b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1200);
+    }, function () {
+      var r = document.createRange(); r.selectNodeContents($("cmd"));
+      var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    });
+  });
+  document.querySelectorAll(".tabs button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".tabs button").forEach(function (x) {
+        x.setAttribute("aria-selected", x === b);
+      });
+      document.querySelectorAll("[data-pane]").forEach(function (p) {
+        p.hidden = p.getAttribute("data-pane") !== b.getAttribute("data-os");
+      });
+    });
+  });
+  build();
+})();
+</script>
+</body>
+</html>
