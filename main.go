@@ -16,6 +16,7 @@ const usage = `snag - download video, audio and images from almost anywhere
 
   snag            open the interactive screen (settings are clickable)
   snag <url>...   download straight away with your saved settings
+  snag serve [port]  run the browser version at http://localhost:8787
 
 Files go to your Downloads folder. Needs yt-dlp and ffmpeg;
 gallery-dl is optional and adds image posts.`
@@ -55,6 +56,17 @@ func main() {
 	args := os.Args[1:]
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
 		fmt.Println(usage)
+		return
+	}
+	if len(args) > 0 && args[0] == "serve" {
+		addr := "8787"
+		if len(args) > 1 {
+			addr = args[1]
+		}
+		if err := serve(addr); err != nil {
+			fmt.Fprintln(os.Stderr, "snag:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	cfg := loadConfig()

@@ -19,6 +19,16 @@ Site: https://fordpepper.github.io/snag
 
 Run `snag`, paste a link, press Enter. Settings are clickable (or use Tab and the arrow keys) and are remembered. Defaults are maximum resolution and best audio quality. Everything is saved to your Downloads folder. `snag <url>` skips the screen and downloads straight away.
 
+## In the browser
+
+```sh
+snag serve
+```
+
+Open http://localhost:8787, or use the box on the [site](https://fordpepper.github.io/snag), which finds the server on your machine. Paste links, pick settings, and the file downloads through your browser (several links come back as a zip). The server listens on localhost only and rejects requests from other websites. `snag serve 9000` changes the port. It works in Termux too.
+
+Browsers can't fetch from these sites directly, so a copy of snag has to run somewhere. The site doesn't run one for you.
+
 ## Install
 
 Needs Go 1.21+, yt-dlp and ffmpeg. gallery-dl is optional.

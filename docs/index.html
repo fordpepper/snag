@@ -39,6 +39,16 @@
   .term button:hover { color:var(--term-fg); }
   .term button[aria-pressed=true] { background:var(--term-fg); color:var(--term); }
   .term button:focus-visible { outline:1px solid var(--term-fg); }
+  .term textarea { all:unset; box-sizing:border-box; display:block; width:100%; min-height:5.2em; white-space:pre-wrap;
+    word-break:break-all; border:1px solid var(--term-dim); border-radius:6px; padding:10px 12px; margin-bottom:18px;
+    color:var(--term-fg); font:inherit; }
+  .term textarea::placeholder { color:var(--term-dim); }
+  .term textarea:focus { border-color:var(--term-fg); }
+  .term .go { display:flex; gap:14px; align-items:center; margin-top:18px; white-space:normal; }
+  .term #go { background:var(--term-fg); color:var(--term); padding:4px 16px; border-radius:4px; font-weight:600; }
+  .term #go:hover { color:var(--term); opacity:.85; }
+  .term #go:disabled { opacity:.5; cursor:default; }
+  .term #msg.err { color:#f08a8a; } .term #msg.ok { color:#8fd3a8; }
   .hint { font-size:13px; color:var(--mute); margin:10px 0 0; }
 
   .tabs { display:flex; gap:22px; border-bottom:1px solid var(--line); margin-bottom:18px; overflow-x:auto; }
@@ -72,10 +82,14 @@
   <h1>Paste a link.<br>Get the file.</h1>
   <p class="lead">YouTube, TikTok, Instagram, X, Reddit and well over a thousand other sites, without watermarks. One small program for Linux, macOS, Windows and Android.</p>
 
-  <div class="term" id="term" aria-label="Preview of the snag screen"></div>
-  <p class="hint">A copy of the real screen. Click the settings.</p>
+  <div class="term" id="term">
+    <textarea id="urls" rows="3" placeholder="Paste a link, or several" spellcheck="false" aria-label="Links"></textarea>
+    <div id="opts"></div>
+    <div class="go"><button id="go" type="button">Download</button><span id="msg" class="d" role="status"></span></div>
+  </div>
+  <p class="hint" id="srv">Looking for the snag server…</p>
 
-  <h2>Install</h2>
+  <h2 id="install">Install</h2>
   <p>Copy the repo with git and build it. You need Go 1.21+, <a href="https://github.com/yt-dlp/yt-dlp#installation">yt-dlp</a> and <a href="https://ffmpeg.org/download.html">ffmpeg</a>.</p>
 
   <div class="tabs" role="tablist">
@@ -136,6 +150,9 @@ snag https://example.com/video</pre>
     <li><b>Cookies</b><br><span class="note">For private or age-gated posts such as Instagram stories. Uses the login from the browser you pick.</span></li>
   </ul>
 
+  <h2>In the browser</h2>
+  <p>Run <code>snag serve</code> and open <code>http://localhost:8787</code>, or use the box at the top of this page. The page sends your links to snag on your own computer, which fetches the file and hands it to your browser. Nothing goes through anyone else's server. On Android this works in Termux too.</p>
+
   <h2>Sites</h2>
   <p>Anything yt-dlp can read, plus image posts through gallery-dl when it is installed.</p>
   <dl class="sites">
@@ -171,27 +188,69 @@ snag https://example.com/video</pre>
     Cookies:    ["None", "Firefox", "Chrome", "Brave"]
   };
   function labels() { return state.mode ? ["Type", "Quality", "Format", "Playlist", "Cookies"] : ["Type", "Resolution", "Playlist", "Cookies"]; }
-  var term = document.getElementById("term");
+  var term = document.getElementById("term"), opts = document.getElementById("opts");
+  var vals = { Resolution: ["max","2160","1440","1080","720","480"], Quality: ["best","320","192","128"],
+    Format: ["mp3","m4a","opus","flac"], Cookies: ["","firefox","chrome","brave"] };
+  try { var saved = JSON.parse(localStorage.getItem("snag") || "{}"); if (saved.row) state = saved; } catch (e) {}
   function draw() {
-    var h = '<span class="d">  ╭' + "─".repeat(46) + '╮\n  │ Paste a link' + " ".repeat(33) + '│\n  ╰' + "─".repeat(46) + '╯</span>\n\n';
+    var h = "";
     labels().forEach(function (l) {
       var sel = l === "Type" ? state.mode : (state.row[l] || 0);
-      h += '  <span class="d">' + (l + "            ").slice(0, 12) + '</span>';
+      h += '<span class="d">' + (l + "            ").slice(0, 12) + '</span>';
       model[l].forEach(function (o, i) {
         h += '<button data-l="' + l + '" data-i="' + i + '" aria-pressed="' + (i === sel) + '">' + o + '</button> ';
       });
       h += "\n";
     });
-    term.innerHTML = h + '\n  <span class="d">Saves to  ~/Downloads</span>';
+    opts.innerHTML = h.replace(/\n$/, "");
   }
-  term.addEventListener("click", function (e) {
+  opts.addEventListener("click", function (e) {
     var b = e.target.closest("button");
     if (!b) return;
     var i = +b.dataset.i;
     if (b.dataset.l === "Type") state.mode = i; else state.row[b.dataset.l] = i;
+    try { localStorage.setItem("snag", JSON.stringify(state)); } catch (e) {}
     draw();
   });
   draw();
+
+  /* browser download through a snag server (same origin, or localhost) */
+  var base = null, srv = document.getElementById("srv"), msg = document.getElementById("msg"), go = document.getElementById("go");
+  function say(t, c) { msg.textContent = t; msg.className = c || "d"; }
+  function pick(l) { return vals[l][state.row[l] || 0]; }
+  function probe(u) {
+    return fetch(u + "/api/health").then(function (r) { return r.json(); })
+      .then(function (j) { return j && j.snag ? u : null; }).catch(function () { return null; });
+  }
+  var local = "http://localhost:8787";
+  probe("").then(function (u) { return u === null ? probe(local) : u; }).then(function (u) {
+    base = u;
+    srv.innerHTML = u === null
+      ? 'Downloading in the browser needs snag running on your computer: <code>snag serve</code>. <a href="#install">Install it</a>, then reload.'
+      : 'Connected to snag' + (u ? " at " + u.replace("http://", "") : "") + '. Files download through your browser.';
+  });
+  function poll(id) {
+    fetch(base + "/api/jobs/" + id).then(function (r) { return r.json(); }).then(function (j) {
+      if (j.state === "running") { say(j.progress); setTimeout(function () { poll(id); }, 700); return; }
+      go.disabled = false;
+      if (j.state === "error") { say(j.error, "err"); return; }
+      say("Done: " + j.name, "ok");
+      location.href = base + "/api/jobs/" + id + "/file";
+    }).catch(function () { go.disabled = false; say("Lost connection to snag", "err"); });
+  }
+  go.addEventListener("click", function () {
+    var text = document.getElementById("urls").value.trim();
+    if (!text) { say("Paste a link first"); return; }
+    if (base === null) { say("snag server not found. Run: snag serve", "err"); return; }
+    go.disabled = true; say("Starting");
+    var body = { urls: text, mode: state.mode ? "audio" : "video", res: pick("Resolution") || "max",
+      aq: pick("Quality") || "best", afmt: pick("Format") || "mp3",
+      playlist: !!state.row.Playlist, cookies: pick("Cookies") };
+    fetch(base + "/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { if (!r.ok) return r.text().then(function (t) { throw new Error(t.trim()); }); return r.json(); })
+      .then(function (j) { poll(j.id); })
+      .catch(function (e) { go.disabled = false; say(e.message || "Could not reach snag", "err"); });
+  });
 
   all(".tabs button").forEach(function (b) {
     b.addEventListener("click", function () {
