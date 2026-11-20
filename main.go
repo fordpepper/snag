@@ -1,102 +1,79 @@
-// snag: a thin, tidy front end for yt-dlp.
+// snag: paste a link, get the file in Downloads.
 package main
 
 import (
-	"flag"
+	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
-const usage = `snag - download video and audio from almost anywhere
+var errNoTTY = errors.New("no terminal")
 
-usage:
-  snag [options] <url> [url...]
+const usage = `snag - download video, audio and images from almost anywhere
 
-options:
-  -a            audio only (mp3)
-  -q <height>   max video height, e.g. 720, 1080 (default: best)
-  -o <dir>      output directory (default: current)
-  -b <browser>  use cookies from a browser (firefox, chrome, ...)
-                needed for private or age-gated posts
-  -p            download whole playlist / profile when the url is one
-  -v            show yt-dlp output
-  -h            show this help
+  snag            open the interactive screen (settings are clickable)
+  snag <url>...   download straight away with your saved settings
 
-needs yt-dlp and ffmpeg on PATH.`
+Files go to your Downloads folder. Needs yt-dlp and ffmpeg;
+gallery-dl is optional and adds image posts.`
+
+func normalize(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if !strings.Contains(s, "://") {
+			s = "https://" + s
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func plain(cfg Config, dir string, urls []string) int {
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "snag: no downloads folder (Termux: run termux-setup-storage)")
+		return 1
+	}
+	fmt.Println("Saving to", dir)
+	saved, err := download(context.Background(), cfg, dir, normalize(urls), func(s string) {
+		fmt.Fprintf(os.Stderr, "\r\x1b[2K%s", s)
+	})
+	fmt.Fprint(os.Stderr, "\r\x1b[2K")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "snag:", err)
+		return 1
+	}
+	for _, f := range saved {
+		fmt.Println(f)
+	}
+	return 0
+}
 
 func main() {
-	var (
-		audio    = flag.Bool("a", false, "")
-		quality  = flag.String("q", "", "")
-		outDir   = flag.String("o", ".", "")
-		browser  = flag.String("b", "", "")
-		playlist = flag.Bool("p", false, "")
-		verbose  = flag.Bool("v", false, "")
-	)
-	flag.Usage = func() { fmt.Fprintln(os.Stderr, usage) }
-	flag.Parse()
-
-	urls := flag.Args()
-	if len(urls) == 0 {
-		flag.Usage()
-		os.Exit(2)
+	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
+		fmt.Println(usage)
+		return
 	}
-	for _, bin := range []string{"yt-dlp", "ffmpeg"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			fmt.Fprintf(os.Stderr, "snag: %s not found on PATH (see README for install)\n", bin)
-			os.Exit(1)
-		}
+	cfg := loadConfig()
+	dir, derr := downloadsDir()
+	if len(args) > 0 {
+		os.Exit(plain(cfg, dir, args))
 	}
-
-	args := buildArgs(*audio, *quality, *outDir, *browser, *playlist, *verbose)
-	args = append(args, urls...)
-
-	cmd := exec.Command("yt-dlp", args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			os.Exit(ee.ExitCode())
+	err := runTUI(cfg, dir, derr)
+	if errors.Is(err, errNoTTY) {
+		fmt.Print("Link: ")
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		urls := strings.Fields(line)
+		if len(urls) == 0 {
+			os.Exit(2)
 		}
+		os.Exit(plain(cfg, dir, urls))
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "snag:", err)
 		os.Exit(1)
 	}
-}
-
-func buildArgs(audio bool, quality, outDir, browser string, playlist, verbose bool) []string {
-	args := []string{
-		"-o", strings.TrimRight(outDir, "/") + "/%(extractor)s - %(title).120B [%(id)s].%(ext)s",
-		"--no-mtime",
-		"--embed-metadata",
-		"--restrict-filenames",
-		"--progress",
-	}
-	if !verbose {
-		args = append(args, "--quiet", "--no-warnings")
-	}
-	if playlist {
-		args = append(args, "--yes-playlist")
-	} else {
-		args = append(args, "--no-playlist")
-	}
-	if browser != "" {
-		args = append(args, "--cookies-from-browser", browser)
-	}
-
-	if audio {
-		return append(args, "-x", "--audio-format", "mp3", "--audio-quality", "0")
-	}
-
-	// Prefer the clean source stream. For TikTok this skips the
-	// watermarked "download" variant; merged output is always mp4.
-	sel := "bv*+ba/b"
-	if quality != "" {
-		sel = fmt.Sprintf("bv*[height<=%s]+ba/b[height<=%s]/b", quality, quality)
-	}
-	return append(args,
-		"-f", sel,
-		"-S", "res,ext:mp4:m4a",
-		"--merge-output-format", "mp4",
-	)
 }

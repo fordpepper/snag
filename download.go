@@ -1,0 +1,155 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+func splitLines(data []byte, atEOF bool) (int, []byte, error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+		return i + 1, data[:i], nil
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+// stream runs a command and calls onLine for each output line (stdout+stderr).
+func stream(ctx context.Context, name string, args []string, onLine func(string)) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stdout, cmd.Stderr = pw, pw
+	if err := cmd.Start(); err != nil {
+		pw.Close()
+		pr.Close()
+		return err
+	}
+	pw.Close()
+	sc := bufio.NewScanner(pr)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	sc.Split(splitLines)
+	for sc.Scan() {
+		onLine(sc.Text())
+	}
+	pr.Close()
+	return cmd.Wait()
+}
+
+func ytdlpArgs(c Config, dir string, urls []string) []string {
+	tmpl := "%(title).120B [%(id)s].%(ext)s"
+	if c.Playlist {
+		tmpl = "%(playlist_index&{} - |)s" + tmpl
+	}
+	a := []string{
+		"-P", dir, "-o", tmpl,
+		"--no-mtime", "--windows-filenames", "--embed-metadata",
+		"--newline", "--progress", "--no-warnings",
+		"--print", "after_move:filepath",
+	}
+	if c.Playlist {
+		a = append(a, "--yes-playlist", "--ignore-errors")
+	} else {
+		a = append(a, "--no-playlist")
+	}
+	if c.Cookies != "" {
+		a = append(a, "--cookies-from-browser", c.Cookies)
+	}
+	if c.Mode == "audio" {
+		q := "0"
+		if c.AQ != "best" {
+			q = c.AQ + "K"
+		}
+		a = append(a, "-f", "ba/b", "-x", "--audio-format", c.AFmt, "--audio-quality", q)
+	} else {
+		sel := "bv*+ba/b"
+		if c.Res != "max" {
+			sel = "bv*[height<=" + c.Res + "]+ba/b[height<=" + c.Res + "]/b"
+		}
+		// Highest resolution first, then prefer mp4/m4a. Watermarked
+		// variants (TikTok) are ranked below the clean stream by yt-dlp.
+		a = append(a, "-f", sel, "-S", "res,ext:mp4:m4a", "--merge-output-format", "mp4/mkv")
+	}
+	return append(a, urls...)
+}
+
+// download fetches urls into dir. Returns the saved file paths.
+func download(ctx context.Context, c Config, dir string, urls []string, prog func(string)) ([]string, error) {
+	if dir == "" {
+		return nil, errors.New("no downloads folder")
+	}
+	for _, bin := range []string{"yt-dlp", "ffmpeg"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			return nil, errors.New(bin + " not found, see the install steps")
+		}
+	}
+
+	var saved []string
+	lastErr := ""
+	err := stream(ctx, "yt-dlp", ytdlpArgs(c, dir, urls), func(l string) {
+		l = strings.TrimSpace(l)
+		switch {
+		case l == "":
+		case strings.HasPrefix(l, "ERROR:"):
+			lastErr = strings.TrimSpace(strings.TrimPrefix(l, "ERROR:"))
+		case strings.HasPrefix(l, "[download]"):
+			if strings.Contains(l, "%") {
+				prog(strings.Join(strings.Fields(strings.TrimPrefix(l, "[download]")), " "))
+			} else {
+				prog("Downloading")
+			}
+		case strings.HasPrefix(l, "["):
+			prog("Processing")
+		case filepath.IsAbs(l):
+			saved = append(saved, l)
+		}
+	})
+	if len(saved) > 0 {
+		return saved, nil
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	// Image posts and sites yt-dlp can't read: try gallery-dl if present.
+	if _, e := exec.LookPath("gallery-dl"); e == nil {
+		prog("Trying images")
+		g := []string{"-D", dir}
+		if c.Cookies != "" {
+			g = append(g, "--cookies-from-browser", c.Cookies)
+		}
+		_ = stream(ctx, "gallery-dl", append(g, urls...), func(l string) {
+			l = strings.TrimSpace(l)
+			if l != "" && !strings.HasPrefix(l, "#") && !strings.HasPrefix(l, "[") && filepath.IsAbs(l) {
+				saved = append(saved, l)
+				prog("Saved " + filepath.Base(l))
+			}
+		})
+		if len(saved) > 0 {
+			return saved, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+
+	if lastErr == "" {
+		lastErr = "download failed"
+		if err != nil {
+			lastErr = err.Error()
+		}
+	}
+	return nil, errors.New(lastErr)
+}
