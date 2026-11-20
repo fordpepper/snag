@@ -54,11 +54,11 @@ func ensureYtdlp(prog func(string)) (string, error) {
 	}
 	asset := ytdlpAsset()
 	if asset == "" || dir == "" || isTermux() {
-		return "", errors.New("yt-dlp not found. Install it: " + ytdlpHint())
+		return "", errors.New("yt-dlp not found. install it: " + ytdlpHint())
 	}
 	prog("Installing yt-dlp")
 	if err := fetch("https://github.com/yt-dlp/yt-dlp/releases/latest/download/"+asset, dir, local); err != nil {
-		return "", fmt.Errorf("could not install yt-dlp (%v). Install it: %s", err, ytdlpHint())
+		return "", fmt.Errorf("could not install yt-dlp (%v). install it: %s", err, ytdlpHint())
 	}
 	return local, nil
 }

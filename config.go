@@ -12,16 +12,15 @@ import (
 
 // Config holds the clickable settings. Zero values are never used; see defaults().
 type Config struct {
-	Mode     string `json:"mode"`     // video | audio
-	Res      string `json:"res"`      // max | 2160 | 1440 | 1080 | 720 | 480
-	AQ       string `json:"aq"`       // best | 320 | 192 | 128
-	AFmt     string `json:"afmt"`     // mp3 | m4a | opus | flac
-	Playlist bool   `json:"playlist"` // download whole playlists/profiles
-	Cookies  string `json:"cookies"`  // "" or a browser name
+	Mode    string `json:"mode"`    // video | audio
+	Res     string `json:"res"`     // max | 2160 | 1440 | 1080 | 720 | 480
+	AQ      string `json:"aq"`      // best | 320 | 192 | 128
+	Cookies string `json:"cookies"` // "" or a yt-dlp browser argument
+	Dir     string `json:"dir"`     // "" = the Downloads folder
 }
 
 func defaults() Config {
-	return Config{Mode: "video", Res: "max", AQ: "best", AFmt: "mp3"}
+	return Config{Mode: "video", Res: "max", AQ: "best"}
 }
 
 func in(v string, list ...string) bool {
@@ -44,10 +43,7 @@ func (c *Config) sanitize() {
 	if !in(c.AQ, "best", "320", "192", "128") {
 		c.AQ = d.AQ
 	}
-	if !in(c.AFmt, "mp3", "m4a", "opus", "flac") {
-		c.AFmt = d.AFmt
-	}
-	if !in(c.Cookies, "", "firefox", "chrome", "chromium", "brave", "edge") {
+	if !validBrowser(c.Cookies) {
 		c.Cookies = d.Cookies
 	}
 }
@@ -118,4 +114,35 @@ func downloadsDir() (string, error) {
 		dir = filepath.Join(home, "Downloads")
 	}
 	return dir, os.MkdirAll(dir, 0o755)
+}
+
+// expandDir turns "~/x" into an absolute path.
+func expandDir(s string) string {
+	s = strings.TrimSpace(s)
+	home, err := os.UserHomeDir()
+	switch {
+	case s == "":
+		return ""
+	case err == nil && s == "~":
+		return home
+	case err == nil && strings.HasPrefix(s, "~/"):
+		return filepath.Join(home, s[2:])
+	}
+	return s
+}
+
+// shortDir is the inverse, for display.
+func shortDir(p string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(p, home) {
+		return "~" + strings.TrimPrefix(p, home)
+	}
+	return p
+}
+
+// startDir is where files go: the saved path, else the Downloads folder.
+func startDir(c Config) (string, error) {
+	if c.Dir != "" {
+		return expandDir(c.Dir), nil
+	}
+	return downloadsDir()
 }

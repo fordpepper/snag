@@ -50,9 +50,6 @@ func stream(ctx context.Context, name string, args []string, onLine func(string)
 
 func ytdlpArgs(c Config, dir string, urls []string) []string {
 	tmpl := "%(title).120B [%(id)s].%(ext)s"
-	if c.Playlist {
-		tmpl = "%(playlist_index&{} - |)s" + tmpl
-	}
 	a := []string{
 		"-P", dir, "-o", tmpl,
 		"--no-mtime", "--windows-filenames", "--embed-metadata",
@@ -60,11 +57,9 @@ func ytdlpArgs(c Config, dir string, urls []string) []string {
 		"-4", "--socket-timeout", "20", "--retries", "3", // broken IPv6 makes yt-dlp hang silently
 		"--print", "after_move:filepath",
 	}
-	if c.Playlist {
-		a = append(a, "--yes-playlist", "--ignore-errors")
-	} else {
-		a = append(a, "--no-playlist")
-	}
+	// A video link inside a playlist gets just that video; a pure
+	// playlist or profile link still downloads everything.
+	a = append(a, "--no-playlist", "--ignore-errors")
 	if c.Cookies != "" {
 		a = append(a, "--cookies-from-browser", c.Cookies)
 	}
@@ -73,7 +68,7 @@ func ytdlpArgs(c Config, dir string, urls []string) []string {
 		if c.AQ != "best" {
 			q = c.AQ + "K"
 		}
-		a = append(a, "-f", "ba/b", "-x", "--audio-format", c.AFmt, "--audio-quality", q)
+		a = append(a, "-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", q)
 	} else {
 		sel := "bv*+ba/b"
 		if c.Res != "max" {
@@ -89,14 +84,17 @@ func ytdlpArgs(c Config, dir string, urls []string) []string {
 // download fetches urls into dir. Returns the saved file paths.
 func download(ctx context.Context, c Config, dir string, urls []string, prog func(string)) ([]string, error) {
 	if dir == "" {
-		return nil, errors.New("no downloads folder")
+		return nil, errors.New("set a download path first")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, errors.New("can't use that folder: " + err.Error())
 	}
 	ytdlp, err := ensureYtdlp(prog)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return nil, errors.New("ffmpeg not found. Install it: " + ffmpegHint())
+		return nil, errors.New("ffmpeg not found. install it: " + ffmpegHint())
 	}
 
 	var saved []string
@@ -164,9 +162,9 @@ func friendly(e string) string {
 	case strings.Contains(l, "confirm you") && strings.Contains(l, "bot"),
 		strings.Contains(l, "sign in"), strings.Contains(l, "log in"), strings.Contains(l, "login"),
 		strings.Contains(l, "logged-in"), strings.Contains(l, "cookies"):
-		return "This needs a login. Set Cookies to a browser you're signed in with, then try again."
+		return "this needs a login. set browser to one you're signed in with, then try again."
 	case strings.Contains(l, "unsupported url"):
-		return "That link isn't supported."
+		return "that link isn't supported."
 	case strings.Contains(l, "ffmpeg"):
 		return e + " (install ffmpeg: " + ffmpegHint() + ")"
 	}

@@ -5,19 +5,20 @@ Paste a link, get the file. YouTube, TikTok, Instagram, X, Reddit and well over 
 Site: https://fordpepper.github.io/snag
 
 ```
-  ╭────────────────────────────────────────╮
-  │ Paste a link                           │
-  ╰────────────────────────────────────────╯
+                snag
 
-  Type         Video   Audio
-  Resolution   Max   2160p   1440p   1080p   720p   480p
-  Playlist     Off   On
-  Cookies      None   Firefox   Chrome   Brave
+      ╭──────────────────────────────╮
+      │ paste a link                 │
+      ╰──────────────────────────────╯
 
-  Saves to  ~/Downloads
+       format       mp4   mp3
+       resolution   max   2160p   1440p   1080p   720p   480p
+       browser      none   firefox
+
+       path         ~/Downloads
 ```
 
-Run `snag`, paste a link, press Enter. Settings are clickable (or use Tab and the arrow keys) and are remembered. Defaults are maximum resolution and best audio quality. Everything is saved to your Downloads folder. `snag <url>` skips the screen and downloads straight away.
+Run `snag`, paste a link, press Enter. Settings are clickable, or focus one with Tab and type (`720`, `mp3`, `zen`). They are remembered. Defaults are maximum resolution and best audio quality. Files go to your Downloads folder; focus the path row and type to change it. `snag <url>` skips the screen and downloads straight away.
 
 ## In the browser
 
@@ -65,9 +66,8 @@ Then `snag`. Files go to the phone's Downloads folder. In tmux, turn on mouse su
 ## Notes
 
 - Watermarks are avoided by taking the original stream a site serves, not by editing video.
-- Private or age-gated posts (Instagram stories, for example) need Cookies set to a browser you're logged in with.
+- Leave browser on none unless a site asks you to sign in (Instagram stories, age-gated posts, YouTube bot checks). Only browsers installed on your machine are listed, Firefox forks like Zen and LibreWolf included.
 - If a download seems stuck, it is usually your network. snag forces IPv4, because broken IPv6 makes yt-dlp hang without any output.
-- YouTube may ask for a login ("confirm you're not a bot"). Set Cookies to a browser you're signed in with.
 - Sites change constantly. If one breaks, update yt-dlp first.
 - Only download what you have the right to.
 

@@ -19,8 +19,8 @@ type row struct {
 }
 
 type hit struct {
-	y, x0, x1 int // 1-based, inclusive
-	row       int // -1 = input box
+	y, x0, x1 int // 1-based screen cells, inclusive
+	row       int // -1 = link box, -2 = path
 	val       string
 }
 
@@ -32,140 +32,146 @@ const (
 )
 
 type ui struct {
-	t       *tty
-	cfg     Config
-	dir     string
-	input   []rune
-	focus   int // 0 = input, 1.. = settings rows
-	hits    []hit
-	status  string
-	kind    int
-	busy    bool
-	cancel  context.CancelFunc
-	quit    bool
-	paste   bool
-	updates chan func()
+	t        *tty
+	cfg      Config
+	dir      string
+	input    []rune
+	pathEdit []rune
+	focus    int // 0 = link, 1..n = settings, n+1 = path
+	buf      string
+	hits     []hit
+	status   string
+	kind     int
+	busy     bool
+	cancel   context.CancelFunc
+	quit     bool
+	paste    bool
+	updates  chan func()
 }
 
 func (u *ui) rows() []row {
 	c := &u.cfg
 	r := []row{{
-		label: "Type",
-		opts:  []opt{{"Video", "video"}, {"Audio", "audio"}},
+		label: "format",
+		opts:  []opt{{"mp4", "video"}, {"mp3", "audio"}},
 		get:   func() string { return c.Mode },
 		set:   func(v string) { c.Mode = v },
 	}}
 	if c.Mode == "video" {
 		r = append(r, row{
-			label: "Resolution",
-			opts: []opt{{"Max", "max"}, {"2160p", "2160"}, {"1440p", "1440"},
+			label: "resolution",
+			opts: []opt{{"max", "max"}, {"2160p", "2160"}, {"1440p", "1440"},
 				{"1080p", "1080"}, {"720p", "720"}, {"480p", "480"}},
 			get: func() string { return c.Res },
 			set: func(v string) { c.Res = v },
 		})
 	} else {
-		r = append(r,
-			row{
-				label: "Quality",
-				opts:  []opt{{"Best", "best"}, {"320k", "320"}, {"192k", "192"}, {"128k", "128"}},
-				get:   func() string { return c.AQ },
-				set:   func(v string) { c.AQ = v },
-			},
-			row{
-				label: "Format",
-				opts:  []opt{{"mp3", "mp3"}, {"m4a", "m4a"}, {"opus", "opus"}, {"flac", "flac"}},
-				get:   func() string { return c.AFmt },
-				set:   func(v string) { c.AFmt = v },
-			})
-	}
-	r = append(r,
-		row{
-			label: "Playlist",
-			opts:  []opt{{"Off", "off"}, {"On", "on"}},
-			get: func() string {
-				if c.Playlist {
-					return "on"
-				}
-				return "off"
-			},
-			set: func(v string) { c.Playlist = v == "on" },
-		},
-		row{
-			label: "Cookies",
-			opts: []opt{{"None", ""}, {"Firefox", "firefox"}, {"Chrome", "chrome"},
-				{"Chromium", "chromium"}, {"Brave", "brave"}, {"Edge", "edge"}},
-			get: func() string { return c.Cookies },
-			set: func(v string) { c.Cookies = v },
+		r = append(r, row{
+			label: "quality",
+			opts:  []opt{{"best", "best"}, {"320k", "320"}, {"192k", "192"}, {"128k", "128"}},
+			get:   func() string { return c.AQ },
+			set:   func(v string) { c.AQ = v },
 		})
+	}
+	if b := browsers(); len(b) > 1 {
+		r = append(r, row{
+			label: "browser",
+			opts:  b,
+			get:   func() string { return c.Cookies },
+			set:   func(v string) { c.Cookies = v },
+		})
+	}
 	return r
 }
 
-func (u *ui) setStatus(kind int, s string) { u.kind, u.status = kind, s }
+func (u *ui) pathFocus() int { return len(u.rows()) + 1 }
 
-func clip(s string, n int) string {
-	if n < 1 {
-		return ""
+func (u *ui) setFocus(f int) {
+	if f != u.focus {
+		u.buf = ""
 	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
+	u.focus = f
+}
+
+func (u *ui) setStatus(kind int, s string) {
+	if kind != stOK {
+		s = strings.ToLower(s)
 	}
-	return string(r[:n-1]) + "…"
+	u.kind, u.status = kind, s
 }
 
 func tail(r []rune, n int) string {
+	if n < 0 {
+		n = 0
+	}
 	if len(r) > n {
 		r = r[len(r)-n:]
 	}
 	return string(r)
 }
 
-func (u *ui) render() {
-	cols, _ := u.t.size()
-	var b strings.Builder
-	u.hits = u.hits[:0]
-	y := 0
-	emit := func(s string) {
-		y++
-		fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K%s", y, s)
+func clip(s string, n int) string {
+	r := []rune(s)
+	if n < 1 {
+		return ""
 	}
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
+
+func (u *ui) render() {
+	cols, rowsN := u.t.size()
 	const (
 		dim  = "\x1b[2m"
 		bold = "\x1b[1m"
 		rev  = "\x1b[7m"
 		off  = "\x1b[0m"
 	)
-
-	emit("")
-	emit("  " + bold + "snag" + off)
-	emit("")
+	var lines []string
+	var hits []hit // y = line index for now
+	add := func(s string) int { lines = append(lines, s); return len(lines) - 1 }
+	center := func(n int, s string) string {
+		p := (cols - n) / 2
+		if p < 0 {
+			p = 0
+		}
+		return strings.Repeat(" ", p) + s
+	}
 
 	w := cols - 4
-	if w > 72 {
-		w = 72
+	if w > 60 {
+		w = 60
 	}
-	if w < 12 {
-		w = 12
+	if w < 24 {
+		w = 24
 	}
-	inner := w - 4 // text width inside "│ " and " │"
-	emit("  ╭" + strings.Repeat("─", w-2) + "╮")
+	m := (cols - w) / 2
+	if m < 0 {
+		m = 0
+	}
+	ind := strings.Repeat(" ", m)
+	inner := w - 4
+
+	add(center(4, bold+"snag"+off))
+	add("")
+	add(ind + "╭" + strings.Repeat("─", w-2) + "╮")
 	text := tail(u.input, inner)
 	disp := text
+	used := utf8.RuneCountInString(text)
 	if len(u.input) == 0 {
-		disp = dim + "Paste a link" + off
+		disp, used = dim+"paste a link"+off, len("paste a link")
 	}
-	pad := inner - utf8.RuneCountInString(text)
-	if len(u.input) == 0 {
-		pad = inner - len("Paste a link")
+	inputLine := add(ind + "│ " + disp + strings.Repeat(" ", max(inner-used, 0)) + " │")
+	add(ind + "╰" + strings.Repeat("─", w-2) + "╯")
+	for l := inputLine - 1; l <= inputLine+1; l++ {
+		hits = append(hits, hit{y: l, x0: m + 1, x1: m + w, row: -1})
 	}
-	inputY := y + 1
-	emit("  │ " + disp + strings.Repeat(" ", max(pad, 0)) + " │")
-	u.hits = append(u.hits, hit{y: y - 1, x0: 3, x1: 3 + w, row: -1})
-	u.hits = append(u.hits, hit{y: y, x0: 3, x1: 3 + w, row: -1})
-	emit("  ╰" + strings.Repeat("─", w-2) + "╯")
-	u.hits = append(u.hits, hit{y: y, x0: 3, x1: 3 + w, row: -1})
-	emit("")
+	add("")
 
+	labelCol := m + 2
+	optCol := labelCol + 12
 	for i, r := range u.rows() {
 		label := fmt.Sprintf("%-12s", r.label)
 		if u.focus == i+1 {
@@ -173,9 +179,10 @@ func (u *ui) render() {
 		} else {
 			label = dim + label + off
 		}
-		line := "  " + label
-		x := 3 + 12
+		line := ind + " " + label
+		x := optCol
 		cur := r.get()
+		li := len(lines)
 		for _, o := range r.opts {
 			wd := utf8.RuneCountInString(o.label) + 2
 			if x+wd > cols {
@@ -186,46 +193,83 @@ func (u *ui) render() {
 			} else {
 				line += dim + " " + o.label + " " + off
 			}
-			u.hits = append(u.hits, hit{y: y + 1, x0: x, x1: x + wd - 1, row: i, val: o.val})
+			hits = append(hits, hit{y: li, x0: x, x1: x + wd - 1, row: i, val: o.val})
 			x += wd + 1
 			line += " "
 		}
-		emit(line)
+		add(line)
 	}
-	emit("")
 
-	home, _ := os.UserHomeDir()
-	shown := u.dir
-	if home != "" && strings.HasPrefix(shown, home) {
-		shown = "~" + strings.TrimPrefix(shown, home)
+	add("")
+	pathLabel := fmt.Sprintf("%-12s", "path")
+	ptxt := tail(u.pathEdit, cols-optCol-1)
+	pline := ind + " "
+	if u.focus == u.pathFocus() {
+		pline += bold + pathLabel + off + ptxt
+	} else {
+		pline += dim + pathLabel + off + ptxt
 	}
-	if shown == "" {
-		shown = "(none)"
+	if len(u.pathEdit) == 0 {
+		pline += dim + "type a folder" + off
 	}
-	emit("  " + dim + "Saves to  " + clip(shown, cols-14) + off)
-	emit("")
+	pathLine := add(pline)
+	hits = append(hits, hit{y: pathLine, x0: m + 1, x1: cols, row: -2})
+	add("")
 
 	st := clip(u.status, cols-4)
+	stN := utf8.RuneCountInString(st)
 	switch u.kind {
 	case stOK:
 		st = "\x1b[32m" + st + off
 	case stErr:
 		st = "\x1b[31m" + st + off
-	case stInfo:
+	default:
 		st = dim + st + off
 	}
-	emit("  " + st)
-	emit("")
-	help := "enter download · click or ←→ to change · esc cancel · ctrl-c quit"
-	emit("  " + dim + clip(help, cols-4) + off)
-	b.WriteString("\x1b[J")
+	add(center(stN, st))
+	add("")
+	help := clip("click or type to change · tab moves · enter downloads · ctrl-c quits", cols-2)
+	add(center(utf8.RuneCountInString(help), dim+help+off))
 
-	if u.focus == 0 {
-		fmt.Fprintf(&b, "\x1b[%d;%dH\x1b[?25h", inputY, 5+utf8.RuneCountInString(text))
-	} else {
+	top := (rowsN - len(lines)) / 2
+	if top < 0 {
+		top = 0
+	}
+	var b strings.Builder
+	for y := 1; y <= rowsN; y++ {
+		i := y - 1 - top
+		if i >= 0 && i < len(lines) {
+			fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K%s", y, lines[i])
+		} else {
+			fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K", y)
+		}
+	}
+	u.hits = u.hits[:0]
+	for _, h := range hits {
+		h.y += top + 1
+		u.hits = append(u.hits, h)
+	}
+	switch {
+	case u.focus == 0:
+		fmt.Fprintf(&b, "\x1b[%d;%dH\x1b[?25h", inputLine+top+1, m+3+used*boolInt(len(u.input) > 0))
+	case u.focus == u.pathFocus():
+		fmt.Fprintf(&b, "\x1b[%d;%dH\x1b[?25h", pathLine+top+1, optCol+utf8.RuneCountInString(ptxt))
+	default:
 		b.WriteString("\x1b[?25l")
 	}
 	u.t.f.WriteString(b.String())
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (u *ui) commit() {
+	u.cfg.sanitize()
+	u.cfg.save()
 }
 
 func (u *ui) click(x, y int) {
@@ -233,14 +277,16 @@ func (u *ui) click(x, y int) {
 		if y != h.y || x < h.x0 || x > h.x1 {
 			continue
 		}
-		if h.row < 0 {
-			u.focus = 0
-			return
+		switch h.row {
+		case -1:
+			u.setFocus(0)
+		case -2:
+			u.setFocus(u.pathFocus())
+		default:
+			u.setFocus(h.row + 1)
+			u.rows()[h.row].set(h.val)
+			u.commit()
 		}
-		u.focus = h.row + 1
-		u.rows()[h.row].set(h.val)
-		u.cfg.sanitize()
-		u.cfg.save()
 		return
 	}
 }
@@ -258,36 +304,101 @@ func (u *ui) step(d int) {
 			cur = i
 		}
 	}
-	cur = (cur + d + len(r.opts)) % len(r.opts)
-	r.set(r.opts[cur].val)
-	u.cfg.sanitize()
+	r.set(r.opts[(cur+d+len(r.opts))%len(r.opts)].val)
+	u.commit()
+}
+
+// field is the text the keyboard edits right now, if any.
+func (u *ui) field() *[]rune {
+	switch {
+	case u.focus == 0:
+		return &u.input
+	case u.focus == u.pathFocus():
+		return &u.pathEdit
+	}
+	return nil
+}
+
+func (u *ui) pathChanged() {
+	u.dir = expandDir(string(u.pathEdit))
+	u.cfg.Dir = string(u.pathEdit)
 	u.cfg.save()
 }
 
-func (u *ui) insert(r rune) {
-	u.focus = 0
-	u.input = append(u.input, r)
+func (u *ui) typeRune(r rune) {
+	if u.paste {
+		u.setFocus(0)
+	}
+	if f := u.field(); f != nil {
+		*f = append(*f, r)
+		if u.focus != 0 {
+			u.pathChanged()
+		}
+		return
+	}
+	// settings: typing "720" or "mp3" or "zen" picks that option
+	rs := u.rows()
+	if u.focus < 1 || u.focus > len(rs) {
+		return
+	}
+	rw := rs[u.focus-1]
+	pick := func(p string) bool {
+		for _, o := range rw.opts {
+			if strings.HasPrefix(strings.ToLower(o.label), p) {
+				rw.set(o.val)
+				return true
+			}
+		}
+		return false
+	}
+	ch := strings.ToLower(string(r))
+	switch {
+	case pick(u.buf + ch):
+		u.buf += ch
+	case pick(ch):
+		u.buf = ch
+	default:
+		return
+	}
+	u.commit()
+}
+
+func (u *ui) edit(fn func(r []rune) []rune) {
+	if f := u.field(); f != nil {
+		*f = fn(*f)
+		if u.focus != 0 {
+			u.pathChanged()
+		}
+	}
 }
 
 func (u *ui) enter() {
+	if u.focus == u.pathFocus() {
+		u.setFocus(0)
+		return
+	}
 	if u.busy {
 		return
 	}
 	fields := strings.Fields(string(u.input))
 	if len(fields) == 0 {
-		u.setStatus(stInfo, "Paste a link first")
+		u.setStatus(stInfo, "paste a link first")
 		return
 	}
 	urls := normalize(fields)
 	for _, s := range urls {
 		if !strings.Contains(s, ".") {
-			u.setStatus(stErr, "That doesn't look like a link")
+			u.setStatus(stErr, "that doesn't look like a link")
 			return
 		}
 	}
+	if u.dir == "" {
+		u.setStatus(stErr, "type a download folder first")
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	u.cancel, u.busy = cancel, true
-	u.setStatus(stBusy, "Starting")
+	u.setStatus(stBusy, "starting")
 	cfg, dir := u.cfg, u.dir
 	go func() {
 		saved, err := download(ctx, cfg, dir, urls, func(s string) {
@@ -300,16 +411,16 @@ func (u *ui) enter() {
 			u.busy = false
 			switch {
 			case ctx.Err() != nil:
-				u.setStatus(stInfo, "Cancelled")
+				u.setStatus(stInfo, "cancelled")
 			case err != nil:
 				u.setStatus(stErr, err.Error())
 			default:
-				msg := "Saved  " + filepath.Base(saved[len(saved)-1])
+				msg := "saved " + filepath.Base(saved[len(saved)-1])
 				if len(saved) > 1 {
-					msg = fmt.Sprintf("Saved %d files", len(saved))
+					msg = fmt.Sprintf("saved %d files", len(saved))
 				}
 				u.input = nil
-				u.focus = 0
+				u.setFocus(0)
 				u.setStatus(stOK, msg)
 			}
 		}
@@ -346,20 +457,26 @@ func (u *ui) handle(b []byte) {
 			u.quit = true
 			return
 		case c == 0x15:
-			u.input = nil
+			u.edit(func([]rune) []rune { return nil })
 			i++
 		case c == 0x17:
-			for len(u.input) > 0 && u.input[len(u.input)-1] == ' ' {
-				u.input = u.input[:len(u.input)-1]
-			}
-			for len(u.input) > 0 && u.input[len(u.input)-1] != ' ' {
-				u.input = u.input[:len(u.input)-1]
-			}
+			u.edit(func(r []rune) []rune {
+				for len(r) > 0 && r[len(r)-1] == ' ' {
+					r = r[:len(r)-1]
+				}
+				for len(r) > 0 && r[len(r)-1] != ' ' && r[len(r)-1] != '/' {
+					r = r[:len(r)-1]
+				}
+				return r
+			})
 			i++
 		case c == 0x7f || c == 0x08:
-			if len(u.input) > 0 {
-				u.input = u.input[:len(u.input)-1]
-			}
+			u.edit(func(r []rune) []rune {
+				if len(r) > 0 {
+					return r[:len(r)-1]
+				}
+				return r
+			})
 			i++
 		case c == '\r' || c == '\n':
 			if !u.paste {
@@ -367,14 +484,14 @@ func (u *ui) handle(b []byte) {
 			}
 			i++
 		case c == '\t':
-			u.focus = (u.focus + 1) % (len(u.rows()) + 1)
+			u.setFocus((u.focus + 1) % (u.pathFocus() + 1))
 			i++
 		case c < 0x20:
 			i++
 		default:
 			r, n := utf8.DecodeRune(b[i:])
 			if r != utf8.RuneError || n > 1 {
-				u.insert(r)
+				u.typeRune(r)
 			}
 			i += n
 		}
@@ -382,9 +499,9 @@ func (u *ui) handle(b []byte) {
 }
 
 func (u *ui) csi(params string, final byte) {
-	n := len(u.rows())
+	n := u.pathFocus() + 1
 	switch {
-	case strings.HasPrefix(params, "<") && (final == 'M'):
+	case strings.HasPrefix(params, "<") && final == 'M':
 		var cb, x, y int
 		if _, err := fmt.Sscanf(params[1:], "%d;%d;%d", &cb, &x, &y); err == nil && cb == 0 {
 			u.click(x, y)
@@ -393,16 +510,14 @@ func (u *ui) csi(params string, final byte) {
 		u.paste = true
 	case params == "201" && final == '~':
 		u.paste = false
-	case final == 'A':
-		u.focus = (u.focus + n) % (n + 1)
+	case final == 'A' || final == 'Z':
+		u.setFocus((u.focus + n - 1) % n)
 	case final == 'B':
-		u.focus = (u.focus + 1) % (n + 1)
+		u.setFocus((u.focus + 1) % n)
 	case final == 'C':
 		u.step(+1)
 	case final == 'D':
 		u.step(-1)
-	case final == 'Z':
-		u.focus = (u.focus + n) % (n + 1)
 	}
 }
 
@@ -412,6 +527,7 @@ func runTUI(cfg Config, dir string, dirErr error) error {
 		return err
 	}
 	u := &ui{t: t, cfg: cfg, dir: dir, updates: make(chan func(), 64)}
+	u.pathEdit = []rune(shortDir(dir))
 	t.f.WriteString("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h")
 	defer func() {
 		if u.cancel != nil {

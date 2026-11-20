@@ -50,13 +50,11 @@ type server struct {
 }
 
 type request struct {
-	URLs     string `json:"urls"`
-	Mode     string `json:"mode"`
-	Res      string `json:"res"`
-	AQ       string `json:"aq"`
-	AFmt     string `json:"afmt"`
-	Playlist bool   `json:"playlist"`
-	Cookies  string `json:"cookies"`
+	URLs    string `json:"urls"`
+	Mode    string `json:"mode"`
+	Res     string `json:"res"`
+	AQ      string `json:"aq"`
+	Cookies string `json:"cookies"`
 }
 
 func newID() string {
@@ -143,7 +141,15 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	io.WriteString(w, `{"snag":true}`)
+	type b struct {
+		Label string `json:"label"`
+		Value string `json:"value"`
+	}
+	list := []b{}
+	for _, o := range browsers()[1:] {
+		list = append(list, b{o.label, o.val})
+	}
+	json.NewEncoder(w).Encode(map[string]any{"snag": true, "browsers": list})
 }
 
 func (s *server) create(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +198,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	s.jobs[id] = j
 	s.mu.Unlock()
 
-	cfg := Config{Mode: q.Mode, Res: q.Res, AQ: q.AQ, AFmt: q.AFmt, Playlist: q.Playlist, Cookies: q.Cookies}
+	cfg := Config{Mode: q.Mode, Res: q.Res, AQ: q.AQ, Cookies: q.Cookies}
 	cfg.sanitize()
 	go func() {
 		defer cancel()

@@ -18,7 +18,7 @@ const usage = `snag - download video, audio and images from almost anywhere
   snag <url>...   download straight away with your saved settings
   snag serve [port]  run the browser version at http://localhost:8787
 
-Files go to your Downloads folder. Needs yt-dlp and ffmpeg;
+Files go to your Downloads folder (change the path on the screen). Needs yt-dlp and ffmpeg;
 gallery-dl is optional and adds image posts.`
 
 func normalize(in []string) []string {
@@ -70,7 +70,7 @@ func main() {
 		return
 	}
 	cfg := loadConfig()
-	dir, derr := downloadsDir()
+	dir, derr := startDir(cfg)
 	if len(args) > 0 {
 		os.Exit(plain(cfg, dir, args))
 	}
