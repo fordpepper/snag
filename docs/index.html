@@ -90,7 +90,7 @@
   <p class="hint" id="srv">Looking for the snag server…</p>
 
   <h2 id="install">Install</h2>
-  <p>Copy the repo with git and build it. You need Go 1.21+, <a href="https://github.com/yt-dlp/yt-dlp#installation">yt-dlp</a> and <a href="https://ffmpeg.org/download.html">ffmpeg</a>.</p>
+  <p>Copy the repo with git and build it. You need Go 1.21+ and <a href="https://ffmpeg.org/download.html">ffmpeg</a>. snag fetches <a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a> itself the first time it needs it.</p>
 
   <div class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-os="linux">Linux</button>
@@ -100,23 +100,17 @@
   </div>
 
   <div data-pane="linux">
-<pre><span class="c"># Arch. Debian/Ubuntu: sudo apt install golang ffmpeg pipx &amp;&amp; pipx install yt-dlp</span>
-sudo pacman -S go yt-dlp ffmpeg
-
+<pre><span class="c"># installs ffmpeg, yt-dlp and Go (pacman, apt, dnf, zypper), then builds snag</span>
 git clone https://github.com/fordpepper/snag
 cd snag
-make
-sudo make install   <span class="c"># optional</span>
+sh install.sh
 
 snag</pre>
   </div>
   <div data-pane="mac" hidden>
-<pre>brew install go yt-dlp ffmpeg gallery-dl
-
-git clone https://github.com/fordpepper/snag
+<pre>git clone https://github.com/fordpepper/snag
 cd snag
-make
-sudo make install   <span class="c"># optional</span>
+sh install.sh       <span class="c"># uses brew</span>
 
 snag</pre>
   </div>

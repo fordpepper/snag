@@ -57,6 +57,7 @@ func ytdlpArgs(c Config, dir string, urls []string) []string {
 		"-P", dir, "-o", tmpl,
 		"--no-mtime", "--windows-filenames", "--embed-metadata",
 		"--newline", "--progress", "--no-warnings",
+		"-4", "--socket-timeout", "20", "--retries", "3", // broken IPv6 makes yt-dlp hang silently
 		"--print", "after_move:filepath",
 	}
 	if c.Playlist {
@@ -90,15 +91,17 @@ func download(ctx context.Context, c Config, dir string, urls []string, prog fun
 	if dir == "" {
 		return nil, errors.New("no downloads folder")
 	}
-	for _, bin := range []string{"yt-dlp", "ffmpeg"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			return nil, errors.New(bin + " not found, see the install steps")
-		}
+	ytdlp, err := ensureYtdlp(prog)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return nil, errors.New("ffmpeg not found. Install it: " + ffmpegHint())
 	}
 
 	var saved []string
 	lastErr := ""
-	err := stream(ctx, "yt-dlp", ytdlpArgs(c, dir, urls), func(l string) {
+	err = stream(ctx, ytdlp, ytdlpArgs(c, dir, urls), func(l string) {
 		l = strings.TrimSpace(l)
 		switch {
 		case l == "":
@@ -151,5 +154,24 @@ func download(ctx context.Context, c Config, dir string, urls []string, prog fun
 			lastErr = err.Error()
 		}
 	}
-	return nil, errors.New(lastErr)
+	return nil, errors.New(friendly(lastErr))
+}
+
+// friendly turns common yt-dlp failures into something actionable.
+func friendly(e string) string {
+	l := strings.ToLower(e)
+	switch {
+	case strings.Contains(l, "confirm you") && strings.Contains(l, "bot"),
+		strings.Contains(l, "sign in"), strings.Contains(l, "log in"), strings.Contains(l, "login"),
+		strings.Contains(l, "logged-in"), strings.Contains(l, "cookies"):
+		return "This needs a login. Set Cookies to a browser you're signed in with, then try again."
+	case strings.Contains(l, "unsupported url"):
+		return "That link isn't supported."
+	case strings.Contains(l, "ffmpeg"):
+		return e + " (install ffmpeg: " + ffmpegHint() + ")"
+	}
+	if len(e) > 200 {
+		e = e[:200] + "…"
+	}
+	return e
 }

@@ -31,16 +31,17 @@ Browsers can't fetch from these sites directly, so a copy of snag has to run som
 
 ## Install
 
-Needs Go 1.21+, yt-dlp and ffmpeg. gallery-dl is optional.
+Needs Go 1.21+ and ffmpeg. yt-dlp is downloaded automatically on first use if it's missing. gallery-dl is optional.
 
 ### Linux / macOS
 
 ```sh
 git clone https://github.com/fordpepper/snag
 cd snag
-make
-sudo make install   # optional
+sh install.sh
 ```
+
+`install.sh` installs ffmpeg, yt-dlp and Go with pacman, apt, dnf, zypper or brew, then builds and installs snag. Or by hand: `make && sudo make install`.
 
 Dependencies: `brew install go yt-dlp ffmpeg gallery-dl` (macOS), `sudo pacman -S go yt-dlp ffmpeg` (Arch), `sudo apt install golang ffmpeg pipx && pipx install yt-dlp` (Debian/Ubuntu).
 
@@ -65,6 +66,8 @@ Then `snag`. Files go to the phone's Downloads folder. In tmux, turn on mouse su
 
 - Watermarks are avoided by taking the original stream a site serves, not by editing video.
 - Private or age-gated posts (Instagram stories, for example) need Cookies set to a browser you're logged in with.
+- If a download seems stuck, it is usually your network. snag forces IPv4, because broken IPv6 makes yt-dlp hang without any output.
+- YouTube may ask for a login ("confirm you're not a bot"). Set Cookies to a browser you're signed in with.
 - Sites change constantly. If one breaks, update yt-dlp first.
 - Only download what you have the right to.
 
